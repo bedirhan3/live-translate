@@ -179,6 +179,11 @@
     <h2>Ayarlar</h2>
     <div class="row"><span>Benim dilim</span><select id="mylang"></select></div>
     <div class="row"><span>Karşı dil</span><select id="theirlang"></select></div>
+    <div class="row"><span>Çeviri modu</span><select id="tmode">
+      <option value="auto">Otomatik (önce canlı)</option>
+      <option value="live">Sadece canlı akış</option>
+      <option value="chunk">Sadece yedek (parça)</option>
+    </select></div>
     <div class="row"><span>Okuma hızı (yedek mod)</span><input type="range" id="rate" min="0.6" max="1.4" step="0.1" value="1"></div>
     <div class="row"><span>API anahtarı (AI Studio veya Vertex)</span><input type="password" id="gkey" placeholder="AIza... / AQ..." autocomplete="off"></div>
     <button class="close" id="setclose">Kapat</button>
@@ -214,6 +219,7 @@ const state = {
   theirLang: store.get("theirLang", "vi"),
   rate: store.get("rate", 1),
   tts: store.get("tts", true),
+  transMode: store.get("transMode", "auto"),   // auto | live | chunk
   geminiKey: store.get("geminiKey", ""),
 };
 const recent = [];  // yedek modda çeviri bağlamı
@@ -360,12 +366,15 @@ function liveConnect() {
     console.log("[LT] canlı bağlantı kapandı:", e.code, e.reason || "");
     if (!state.running || !liveMode) return;
     liveFails++;
-    if (liveFails <= 3) {
-      setTimeout(() => { if (state.running && liveMode) liveConnect(); }, 900);
+    if (liveFails <= 3 || state.transMode === "live") {
+      // "sadece canlı" modunda asla yedeğe düşme, artan aralıkla denemeye devam et
+      const wait = Math.min(900 * liveFails, 5000);
+      setTimeout(() => { if (state.running && liveMode) liveConnect(); }, wait);
     } else {
       liveMode = false;   // canlı mod çalışmıyor — parça moduna düş
       console.log("[LT] canlı mod 3 kez kurulamadı — yedek moda geçildi");
       setStatus("Canlı mod kullanılamadı — yedek modda devam ediliyor", true);
+      render();
     }
   };
   ws.onerror = () => {};
@@ -777,8 +786,11 @@ el.flash.addEventListener("click", () => el.flash.classList.remove("show"));
 function render() {
   const A = langOf(state.myLang), B = langOf(state.theirLang);
   const backendName = backend ? (backend.type === "vertex" ? "Vertex" : "AI Studio") : "";
-  el.langlabel.textContent = A.name + " ↔ " + B.native + " · "
-    + (liveMode ? "canlı" : "yedek mod") + (backendName ? " · " + backendName : "");
+  const modeName = liveMode
+    ? "🟢 CANLI akış (ses doğrudan modele)"
+    : "🟡 yedek: parça gönderim";
+  el.langlabel.textContent = A.name + " ↔ " + B.native + " · " + modeName
+    + (backendName ? " · " + backendName : "");
   el.micbtn.classList.toggle("on", state.running);
   el.micbtn.textContent = state.running ? "⏹" : "🎤";
   el.mutebtn.textContent = state.tts ? "🔊" : "🔇";
@@ -829,9 +841,9 @@ el.micbtn.addEventListener("click", async () => {
   if (!playCtx) playCtx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 24000 });
   if (playCtx.state === "suspended") playCtx.resume();
   state.running = true;
-  liveMode = true;
+  liveMode = state.transMode !== "chunk";
   liveFails = 0;
-  liveConnect();
+  if (liveMode) liveConnect();
   acquireWake();
   render();
 });
@@ -851,8 +863,22 @@ LANGS.forEach(l => {
 });
 selMy.value = state.myLang;
 selTheir.value = state.theirLang;
+$("tmode").value = state.transMode;
 $("rate").value = state.rate;
 $("gkey").value = state.geminiKey;
+
+$("tmode").addEventListener("change", e => {
+  state.transMode = e.target.value;
+  store.set("transMode", state.transMode);
+  liveFails = 0;
+  if (state.running) {
+    if (state.transMode === "chunk") { liveClose(); liveMode = false; }
+    else { liveMode = true; liveClose(); liveConnect(); }
+  } else {
+    liveMode = state.transMode !== "chunk";
+  }
+  render();
+});
 
 function restartLive() {
   if (state.running && liveMode) { liveClose(); liveConnect(); }
