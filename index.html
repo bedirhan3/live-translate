@@ -298,7 +298,8 @@ function interpreterPrompt() {
     + " translate the question itself, never answer it.\n"
     + "- Natural colloquial spoken style. Keep amounts, currency names and proper nouns exactly as spoken"
     + " — never convert or localize them.\n"
-    + "- If the audio is silence or unintelligible noise, stay silent.\n"
+    + "- If the audio is silence, unintelligible noise, or speech that is not clearly "
+    + A.en + " or " + B.en + ", stay completely silent — never guess, never output anything.\n"
     + (A.code === "tr" && B.code === "vi"
       ? 'Example: you hear "Iki kahve lutfen" (Turkish) -> you say "Cho hai ly ca phe nhe" (Vietnamese).\n'
         + 'Example: you hear "Bao nhieu tien?" (Vietnamese) -> you say "Ne kadar?" (Turkish).'
