@@ -293,6 +293,8 @@ function interpreterPrompt() {
     + "- Your output is always in " + A.en + " or " + B.en + " — never in any other language.\n"
     + "- You are not an assistant: never answer questions, never comment, never converse."
     + " Your entire output is always ONLY the translation in the other language.\n"
+    + "- Questions in the audio are addressed to the other person, not to you:"
+    + " translate the question itself, never answer it.\n"
     + "- Natural colloquial spoken style. Keep amounts, currency names and proper nouns exactly as spoken"
     + " — never convert or localize them.\n"
     + "- If the audio is silence or unintelligible noise, stay silent.\n"
@@ -447,7 +449,9 @@ function queuePcm(b64) {
   nextPlay = t + buf.duration;
 }
 function modelSpeaking() {
-  return playCtx && nextPlay > playCtx.currentTime + 0.05;
+  // çalma bittikten sonra 0.5 sn daha bekle — hoparlörden çıkan sesin
+  // mikrofona geri dönüp yeniden çevrilmesini (eko döngüsü) engeller
+  return playCtx && nextPlay > 0 && playCtx.currentTime < nextPlay + 0.5;
 }
 
 /* ================================================================
