@@ -180,7 +180,7 @@
     <div class="row"><span>Benim dilim</span><select id="mylang"></select></div>
     <div class="row"><span>Karşı dil</span><select id="theirlang"></select></div>
     <div class="row"><span>Okuma hızı (yedek mod)</span><input type="range" id="rate" min="0.6" max="1.4" step="0.1" value="1"></div>
-    <div class="row"><span>Gemini API anahtarı</span><input type="password" id="gkey" placeholder="AIza..." autocomplete="off"></div>
+    <div class="row"><span>API anahtarı (AI Studio veya Vertex)</span><input type="password" id="gkey" placeholder="AIza... / AQ..." autocomplete="off"></div>
     <button class="close" id="setclose">Kapat</button>
   </div>
 </div>
@@ -257,6 +257,7 @@ async function resolveBackend() {
     backend = { type: "vertex", project: m[1] };
   }
   store.set(cacheKey, backend);
+  console.log("[LT] uç nokta çözümlendi:", JSON.stringify(backend));
   return backend;
 }
 
@@ -337,7 +338,9 @@ function liveConnect() {
     try { m = JSON.parse(txt); } catch { return; }
     if (m.setupComplete) {
       wsUp = true; liveFails = 0;
+      console.log("[LT] canlı bağlantı hazır (model: " + liveModelPath() + ")");
       if (state.running) setStatus("Dinliyor (canlı) — konuşabilirsiniz", true);
+      render();
       return;
     }
     const sc = m.serverContent;
@@ -351,14 +354,16 @@ function liveConnect() {
     }
     if (sc.turnComplete) commitTurn();
   };
-  ws.onclose = () => {
+  ws.onclose = e => {
     wsUp = false;
+    console.log("[LT] canlı bağlantı kapandı:", e.code, e.reason || "");
     if (!state.running || !liveMode) return;
     liveFails++;
     if (liveFails <= 3) {
       setTimeout(() => { if (state.running && liveMode) liveConnect(); }, 900);
     } else {
       liveMode = false;   // canlı mod çalışmıyor — parça moduna düş
+      console.log("[LT] canlı mod 3 kez kurulamadı — yedek moda geçildi");
       setStatus("Canlı mod kullanılamadı — yedek modda devam ediliyor", true);
     }
   };
@@ -406,6 +411,7 @@ function commitTurn() {
   const dl = detectLang(dst);
   const to = dl ? langOf(dl) : langOf(state.theirLang);
   const from = to.code === state.myLang ? langOf(state.theirLang) : langOf(state.myLang);
+  console.log("[LT] çeviri:", (src || "?") + "  →  " + dst);
   recent.push({ from: from.code, text: src || "…", out: dst });
   while (recent.length > 6) recent.shift();
   if (div) {
@@ -449,9 +455,9 @@ function queuePcm(b64) {
   nextPlay = t + buf.duration;
 }
 function modelSpeaking() {
-  // çalma bittikten sonra 0.5 sn daha bekle — hoparlörden çıkan sesin
+  // çalma bittikten sonra 0.8 sn daha bekle — hoparlörden çıkan sesin
   // mikrofona geri dönüp yeniden çevrilmesini (eko döngüsü) engeller
-  return playCtx && nextPlay > 0 && playCtx.currentTime < nextPlay + 0.5;
+  return playCtx && nextPlay > 0 && playCtx.currentTime < nextPlay + 0.8;
 }
 
 /* ================================================================
@@ -610,7 +616,7 @@ function onAudio(e) {
       sendLiveFrame(data);
     } else {
       preroll.push(new Float32Array(data));
-      if (preroll.length > 4) preroll.shift();
+      if (preroll.length > 6) preroll.shift();
     }
     return;
   }
@@ -769,7 +775,9 @@ el.flash.addEventListener("click", () => el.flash.classList.remove("show"));
 /* ---------------- arayüz ---------------- */
 function render() {
   const A = langOf(state.myLang), B = langOf(state.theirLang);
-  el.langlabel.textContent = A.name + " ↔ " + B.native + " · " + (liveMode ? "canlı çeviri" : "yedek mod");
+  const backendName = backend ? (backend.type === "vertex" ? "Vertex" : "AI Studio") : "";
+  el.langlabel.textContent = A.name + " ↔ " + B.native + " · "
+    + (liveMode ? "canlı" : "yedek mod") + (backendName ? " · " + backendName : "");
   el.micbtn.classList.toggle("on", state.running);
   el.micbtn.textContent = state.running ? "⏹" : "🎤";
   el.mutebtn.textContent = state.tts ? "🔊" : "🔇";
