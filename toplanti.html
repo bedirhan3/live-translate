@@ -125,7 +125,7 @@ function wsUrl() {
 function modelPath() {
   return backend.type === "vertex"
     ? "projects/" + backend.project + "/locations/us-central1/publishers/google/models/gemini-live-2.5-flash"
-    : "models/gemini-live-2.5-flash-preview";
+    : "models/gemini-3.5-live-translate-preview";   // AI Studio'nun eş zamanlı çeviri modeli
 }
 
 function connect() {
@@ -133,15 +133,18 @@ function connect() {
   wsUp = false; curIn = ""; curOut = "";
   ws = new WebSocket(wsUrl());
   ws.onopen = () => {
-    ws.send(JSON.stringify({
-      setup: {
-        model: modelPath(),
-        generationConfig: { responseModalities: ["TEXT"] },
-        systemInstruction: { parts: [{ text: SYS }] },
-        inputAudioTranscription: {},
-        contextWindowCompression: { slidingWindow: {} },
-      },
-    }));
+    const gl = backend.type === "gl";
+    // live-translate modeli TEXT modaliteyi desteklemiyor; AUDIO ister ama
+    // sesi çalmayız, altyazıyı outputTranscription'dan alırız
+    const setup = {
+      model: modelPath(),
+      generationConfig: { responseModalities: [gl ? "AUDIO" : "TEXT"] },
+      systemInstruction: { parts: [{ text: SYS }] },
+      inputAudioTranscription: {},
+    };
+    if (gl) setup.outputAudioTranscription = {};
+    else setup.contextWindowCompression = { slidingWindow: {} };
+    ws.send(JSON.stringify({ setup: setup }));
   };
   ws.onmessage = async ev => {
     let txt; try { txt = typeof ev.data === "string" ? ev.data : await ev.data.text(); } catch { return; }
@@ -155,9 +158,11 @@ function connect() {
     const sc = m.serverContent;
     if (!sc) return;
     if (sc.inputTranscription && sc.inputTranscription.text) { curIn += sc.inputTranscription.text; updatePending(); }
+    if (sc.outputTranscription && sc.outputTranscription.text) { curOut += sc.outputTranscription.text; updatePending(); }
     if (sc.modelTurn) {
       for (const p of sc.modelTurn.parts || []) {
         if (p.text) { curOut += p.text; updatePending(); }
+        // p.inlineData (ses) bilinçli olarak yok sayılır — altyazı modu
       }
     }
     if (sc.turnComplete) commit();
@@ -189,6 +194,7 @@ function mkDiv() {
   while (el.chat.children.length > 100) el.chat.firstChild.remove();
   return div;
 }
+let commitTimer = null;
 function updatePending() {
   const src = curIn.trim(), dst = curOut.trim();
   if (!src && !dst) return;
@@ -196,8 +202,14 @@ function updatePending() {
   pendingDiv.querySelector(".src").textContent = src;
   pendingDiv.querySelector(".dst").textContent = dst || "…";
   el.chat.scrollTop = el.chat.scrollHeight;
+  // live-translate modeli turnComplete göndermeyebiliyor:
+  // cümle sınırında + yeterince uzunsa hemen, yoksa 2 sn'lik duraklamada kes
+  if (dst.length > 220 && /[.!?…]"?\s*$/.test(dst)) { commit(); return; }
+  if (commitTimer) clearTimeout(commitTimer);
+  commitTimer = setTimeout(() => { if (curOut.trim()) commit(); }, 2000);
 }
 function commit() {
+  if (commitTimer) { clearTimeout(commitTimer); commitTimer = null; }
   const src = curIn.trim(), dst = curOut.trim();
   curIn = ""; curOut = "";
   const div = pendingDiv; pendingDiv = null;
