@@ -45,9 +45,15 @@
 <header>
   <div class="dot" id="dot"></div>
   <div id="status">Hazır</div>
+  <select id="mmodel" style="background:var(--surface);border:1px solid var(--line);border-radius:8px;color:var(--text);padding:7px;font-size:13px;max-width:230px">
+    <option value="auto">Model: Otomatik</option>
+  </select>
   <button id="startbtn">▶ Sesi Yakala</button>
 </header>
 <div id="keyrow"><input id="keyin" type="password" placeholder="API anahtarı (AIza... veya AQ...)"></div>
+<div id="modelrow" style="display:none;gap:8px;padding:10px 16px;border-bottom:1px solid var(--line)">
+  <input id="modelin" type="text" placeholder="Özel model adı (örn. gemini-3.5-live-translate-preview)" style="flex:1;background:var(--surface);border:1px solid var(--line);border-radius:8px;color:var(--text);padding:9px 11px;font-size:14px">
+</div>
 
 <main id="chat">
   <div id="empty">
@@ -72,6 +78,7 @@ const store = {
 const state = {
   running: false,
   geminiKey: store.get("geminiKey", ""),
+  meetModel: store.get("meetModel", "auto"),
 };
 const $ = id => document.getElementById(id);
 const el = { dot: $("dot"), status: $("status"), chat: $("chat"), empty: $("empty"), btn: $("startbtn"), keyrow: $("keyrow"), keyin: $("keyin") };
@@ -123,9 +130,42 @@ function wsUrl() {
     : "wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent?key=" + encodeURIComponent(state.geminiKey);
 }
 function modelPath() {
-  return backend.type === "vertex"
-    ? "projects/" + backend.project + "/locations/us-central1/publishers/google/models/gemini-live-2.5-flash"
-    : "models/gemini-3.5-live-translate-preview";   // AI Studio'nun eş zamanlı çeviri modeli
+  if (backend.type === "vertex") {
+    const name = state.meetModel === "auto" ? "gemini-live-2.5-flash" : state.meetModel;
+    return name.indexOf("projects/") === 0
+      ? name
+      : "projects/" + backend.project + "/locations/us-central1/publishers/google/models/" + name;
+  }
+  // AI Studio varsayılanı: eş zamanlı çeviri modeli
+  const name = state.meetModel === "auto" ? "gemini-3.5-live-translate-preview" : state.meetModel;
+  return name.indexOf("models/") === 0 ? name : "models/" + name;
+}
+
+async function populateModels() {
+  const sel = $("mmodel");
+  const keep = state.meetModel;
+  let names = [];
+  if (state.geminiKey) {
+    if (!backend) { try { await resolveBackend(); } catch {} }
+    if (backend && backend.type === "gl") {
+      try {
+        const r = await fetch("https://generativelanguage.googleapis.com/v1beta/models?pageSize=1000&key="
+          + encodeURIComponent(state.geminiKey));
+        const d = await r.json();
+        names = (d.models || [])
+          .filter(m => (m.supportedGenerationMethods || []).includes("bidiGenerateContent"))
+          .map(m => m.name.replace(/^models\//, ""));
+      } catch {}
+    } else if (backend && backend.type === "vertex") {
+      names = ["gemini-live-2.5-flash", "gemini-2.0-flash-live-preview-04-09"];
+    }
+  }
+  sel.innerHTML = "";
+  sel.add(new Option("Model: Otomatik", "auto"));
+  for (const n of names) sel.add(new Option(n, n));
+  sel.add(new Option("Özel model adı…", "custom"));
+  if (keep !== "auto" && ![...sel.options].some(o => o.value === keep)) sel.add(new Option(keep, keep));
+  sel.value = [...sel.options].some(o => o.value === keep) ? keep : "auto";
 }
 
 function connect() {
@@ -346,10 +386,37 @@ el.keyin.addEventListener("change", () => {
   state.geminiKey = el.keyin.value.trim();
   store.set("geminiKey", state.geminiKey);
   backend = null;
+  state.meetModel = "auto"; store.set("meetModel", "auto");
   if (state.geminiKey) { el.keyrow.classList.remove("show"); setStatus("Anahtar kaydedildi — Sesi Yakala'ya bas", false); }
+  populateModels();
+});
+
+/* model seçimi */
+function applyModel(v) {
+  state.meetModel = v;
+  store.set("meetModel", v);
+  fails = 0;
+  console.log("[MT] model seçildi:", v);
+  if (state.running) { disconnect(); connect(); }
+}
+$("mmodel").addEventListener("change", () => {
+  const v = $("mmodel").value;
+  if (v === "custom") {
+    $("modelrow").style.display = "flex";
+    $("modelin").value = state.meetModel === "auto" ? "" : state.meetModel;
+    $("modelin").focus();
+    return;
+  }
+  $("modelrow").style.display = "none";
+  applyModel(v);
+});
+$("modelin").addEventListener("change", e => {
+  const v = e.target.value.trim();
+  if (v) { $("modelrow").style.display = "none"; applyModel(v); }
 });
 
 if (!state.geminiKey) el.keyrow.classList.add("show");
+populateModels();
 </script>
 </body>
 </html>

@@ -184,6 +184,8 @@
       <option value="live">Sadece canlı akış</option>
       <option value="chunk">Sadece yedek (parça)</option>
     </select></div>
+    <div class="row"><span>Model</span><select id="lmodel"><option value="auto">Otomatik (önerilen)</option></select></div>
+    <div class="row" id="lmodelcustomrow" style="display:none"><span>Özel model adı</span><input type="text" id="lmodelcustom" placeholder="örn. gemini-live-2.5-flash" style="background:var(--surface-2);color:var(--text);border:1px solid var(--line);border-radius:8px;padding:8px;font-size:15px;max-width:55%"></div>
     <div class="row"><span>Okuma hızı (yedek mod)</span><input type="range" id="rate" min="0.6" max="1.4" step="0.1" value="1"></div>
     <div class="row"><span>API anahtarı (AI Studio veya Vertex)</span><input type="password" id="gkey" placeholder="AIza... / AQ..." autocomplete="off"></div>
     <button class="close" id="setclose">Kapat</button>
@@ -220,6 +222,7 @@ const state = {
   rate: store.get("rate", 1),
   tts: store.get("tts", true),
   transMode: store.get("transMode", "auto"),   // auto | live | chunk
+  liveModel: store.get("liveModel", "auto"),   // "auto" veya açık model adı
   geminiKey: store.get("geminiKey", ""),
 };
 const recent = [];  // yedek modda çeviri bağlamı
@@ -276,9 +279,30 @@ function liveWsUrl() {
 }
 
 function liveModelPath() {
-  return backend.type === "vertex"
-    ? "projects/" + backend.project + "/locations/us-central1/publishers/google/models/gemini-live-2.5-flash"
-    : "models/gemini-2.5-flash-native-audio-preview-09-2025";
+  if (backend.type === "vertex") {
+    const name = state.liveModel === "auto" ? "gemini-live-2.5-flash" : state.liveModel;
+    return name.indexOf("projects/") === 0
+      ? name
+      : "projects/" + backend.project + "/locations/us-central1/publishers/google/models/" + name;
+  }
+  const name = state.liveModel === "auto" ? "gemini-2.5-flash-native-audio-preview-09-2025" : state.liveModel;
+  return name.indexOf("models/") === 0 ? name : "models/" + name;
+}
+
+/* seçilebilir model listesi: AI Studio'da API'den canlı çekilir, Vertex'te bilinen adaylar */
+async function listLiveModels() {
+  if (!backend) { try { await resolveBackend(); } catch { return []; } }
+  if (backend.type === "gl") {
+    try {
+      const r = await fetch("https://generativelanguage.googleapis.com/v1beta/models?pageSize=1000&key="
+        + encodeURIComponent(state.geminiKey));
+      const d = await r.json();
+      return (d.models || [])
+        .filter(m => (m.supportedGenerationMethods || []).includes("bidiGenerateContent"))
+        .map(m => m.name.replace(/^models\//, ""));
+    } catch { return []; }
+  }
+  return ["gemini-live-2.5-flash", "gemini-2.0-flash-live-preview-04-09"];
 }
 
 function restUrl() {
@@ -391,6 +415,7 @@ function liveClose() {
 
 /* canlı akışta yazıyı kelime kelime göster */
 let pendingDiv = null;
+let commitTimer = null;   // turnComplete göndermeyen modeller için emniyet
 function updatePending() {
   const src = curIn.trim(), dst = curOut.trim();
   if (!src && !dst) return;
@@ -410,9 +435,12 @@ function updatePending() {
   pendingDiv.querySelector(".src").textContent = src;
   pendingDiv.querySelector(".dst").textContent = dst || "…";
   el.chat.scrollTop = el.chat.scrollHeight;
+  if (commitTimer) clearTimeout(commitTimer);
+  commitTimer = setTimeout(() => { if (curOut.trim()) commitTurn(); }, 2500);
 }
 
 function commitTurn() {
+  if (commitTimer) { clearTimeout(commitTimer); commitTimer = null; }
   const src = curIn.trim(), dst = curOut.trim();
   curIn = ""; curOut = "";
   const div = pendingDiv;
@@ -883,7 +911,44 @@ $("tmode").addEventListener("change", e => {
 function restartLive() {
   if (state.running && liveMode) { liveClose(); liveConnect(); }
 }
-$("setbtn").addEventListener("click", () => el.settings.classList.add("show"));
+async function populateModels() {
+  const sel = $("lmodel");
+  const keep = state.liveModel;
+  sel.innerHTML = "";
+  sel.add(new Option("Otomatik (önerilen)", "auto"));
+  const names = await listLiveModels();
+  for (const n of names) sel.add(new Option(n, n));
+  sel.add(new Option("Özel model adı…", "custom"));
+  if (keep !== "auto" && ![...sel.options].some(o => o.value === keep)) {
+    sel.add(new Option(keep + " (kayıtlı)", keep));
+  }
+  sel.value = [...sel.options].some(o => o.value === keep) ? keep : "auto";
+}
+
+function applyModel(v) {
+  state.liveModel = v;
+  store.set("liveModel", v);
+  liveFails = 0;
+  console.log("[LT] model seçildi:", v);
+  if (state.running && liveMode) { liveClose(); liveConnect(); }
+}
+$("lmodel").addEventListener("change", () => {
+  const v = $("lmodel").value;
+  if (v === "custom") {
+    $("lmodelcustomrow").style.display = "flex";
+    $("lmodelcustom").value = state.liveModel === "auto" ? "" : state.liveModel;
+    $("lmodelcustom").focus();
+    return;
+  }
+  $("lmodelcustomrow").style.display = "none";
+  applyModel(v);
+});
+$("lmodelcustom").addEventListener("change", e => {
+  const v = e.target.value.trim();
+  if (v) applyModel(v);
+});
+
+$("setbtn").addEventListener("click", () => { el.settings.classList.add("show"); populateModels(); });
 $("setclose").addEventListener("click", () => el.settings.classList.remove("show"));
 el.settings.addEventListener("click", e => { if (e.target === el.settings) el.settings.classList.remove("show"); });
 selMy.addEventListener("change", () => { state.myLang = selMy.value; store.set("myLang", state.myLang); render(); restartLive(); });
@@ -893,6 +958,8 @@ $("gkey").addEventListener("change", e => {
   state.geminiKey = e.target.value.trim();
   store.set("geminiKey", state.geminiKey);
   backend = null; liveMode = true; liveFails = 0;   // yeni anahtar → uç noktayı yeniden çözümle
+  state.liveModel = "auto"; store.set("liveModel", "auto");  // eski model yeni anahtarda geçersiz olabilir
+  populateModels();
 });
 
 /* ---------------- başlangıç ---------------- */
