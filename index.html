@@ -302,7 +302,7 @@ async function listLiveModels() {
         .map(m => m.name.replace(/^models\//, ""));
     } catch { return []; }
   }
-  return ["gemini-live-2.5-flash", "gemini-2.0-flash-live-preview-04-09"];
+  return ["gemini-live-2.5-flash"];   // Vertex'te doğrulanmış canlı model
 }
 
 function restUrl() {
@@ -390,6 +390,13 @@ function liveConnect() {
     console.log("[LT] canlı bağlantı kapandı:", e.code, e.reason || "");
     if (!state.running || !liveMode) return;
     liveFails++;
+    // seçili model art arda bağlantı kuramıyorsa Otomatik'e dön (sonsuz döngü olmasın)
+    if (liveFails === 2 && state.liveModel !== "auto") {
+      console.log("[LT] model '" + state.liveModel + "' bağlantı kuramadı — Otomatik'e dönülüyor");
+      state.liveModel = "auto";
+      store.set("liveModel", "auto");
+      setStatus("Seçilen model çalışmadı — Otomatik modele dönüldü", true);
+    }
     if (liveFails <= 3 || state.transMode === "live") {
       // "sadece canlı" modunda asla yedeğe düşme, artan aralıkla denemeye devam et
       const wait = Math.min(900 * liveFails, 5000);

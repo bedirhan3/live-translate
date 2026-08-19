@@ -157,7 +157,7 @@ async function populateModels() {
           .map(m => m.name.replace(/^models\//, ""));
       } catch {}
     } else if (backend && backend.type === "vertex") {
-      names = ["gemini-live-2.5-flash", "gemini-2.0-flash-live-preview-04-09"];
+      names = ["gemini-live-2.5-flash"];   // Vertex'te doğrulanmış canlı model
     }
   }
   sel.innerHTML = "";
@@ -212,6 +212,14 @@ function connect() {
     console.log("[MT] bağlantı kapandı:", e.code, e.reason || "");
     if (!state.running) return;
     fails++;
+    // seçili model art arda bağlantı kuramıyorsa Otomatik'e dön
+    if (fails === 2 && state.meetModel !== "auto") {
+      console.log("[MT] model '" + state.meetModel + "' bağlantı kuramadı — Otomatik'e dönülüyor");
+      state.meetModel = "auto";
+      store.set("meetModel", "auto");
+      setStatus("Seçilen model çalışmadı — Otomatik modele dönüldü", true);
+      populateModels();
+    }
     const wait = Math.min(900 * fails, 5000);
     setTimeout(() => { if (state.running) connect(); }, wait);
   };
